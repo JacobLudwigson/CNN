@@ -27,6 +27,7 @@ double** filterBiases;
 
 double*** convolutionalLayers;
 double** paddedImages;
+double** paddedGradients;
 double** summedImgs;
 double** maxPooledLayers;
 int** pooledIndices;
@@ -53,11 +54,40 @@ void randInitArray(double* array, int size, double lower, double upper) {
         array[i] = lower + ((double)rand() / RAND_MAX) * (upper - lower); // Scale to [1, 20]
     }
 }
+double rand_normal() {
+    static int hasSpare = 0;
+    static double spare;
+
+    if (hasSpare) {
+        hasSpare = 0;
+        return spare;
+    }
+
+    hasSpare = 1;
+    double u, v, s;
+    do {
+        u = (rand() / ((double)RAND_MAX)) * 2.0 - 1.0;
+        v = (rand() / ((double)RAND_MAX)) * 2.0 - 1.0;
+        s = u * u + v * v;
+    } while (s >= 1 || s == 0);
+
+    s = sqrt(-2.0 * log(s) / s);
+    spare = v * s;
+    return u * s;
+}
+
+// Function to initialize weights using He Normal initialization
+void he_normal_init(double *weights, int size, int fan_in) {
+    double scale = sqrt(2.0 / fan_in);
+    for (int i = 0; i < size; i++) {
+        weights[i] = rand_normal() * scale;
+    }
+}
 void initCNN(){
     int necPadding;
     int paddedImgWidth;
     int imgWidth;
-    srand((unsigned int) time(NULL));
+    srand(time(NULL));
     filters = malloc(numConvolutionalLayers * sizeof(double*));
     reverseFilters = malloc(numConvolutionalLayers * sizeof(double*));
     convolutionalLayers = malloc(numConvolutionalLayers * sizeof(double*));
@@ -67,6 +97,7 @@ void initCNN(){
     pooledGradients = malloc(numConvolutionalLayers * sizeof(double*));
     filterBiases = malloc(numConvolutionalLayers * sizeof(double*));
     paddedImages = malloc(numConvolutionalLayers * sizeof(double *));
+    paddedGradients = malloc(numConvolutionalLayers * sizeof(double));
     summedImgs = malloc(numConvolutionalLayers * sizeof(double *));
 
     for (int i = 0; i < numConvolutionalLayers; i++){
@@ -78,10 +109,12 @@ void initCNN(){
         necPadding = filterSizes[i] / 2;
         paddedImgWidth = imgWidth + 2 * necPadding;
         paddedImages[i] = malloc(sizeof(double) * paddedImgWidth * paddedImgWidth);
+        paddedGradients[i] = malloc(sizeof(double) * paddedImgWidth * paddedImgWidth);
         for (int j = 0; j < numFiltersAtConvolutionalLayers[i]; j++){ 
             filters[i][j] = malloc(filterSizes[i] * filterSizes[i]  * sizeof(double));
             reverseFilters[i][j] = malloc(filterSizes[i] * filterSizes[i]  * sizeof(double));
-            randInitArray(filters[i][j], filterSizes[i]*filterSizes[i], -0.2f, 0.2f);
+            he_normal_init(filters[i][j], filterSizes[i]*filterSizes[i], filterSizes[i]*filterSizes[i]);
+            // randInitArray(filters[i][j], filterSizes[i]*filterSizes[i], -0.15f, 0.15f);
             convolutionalLayers[i][j] = malloc(sizeConvolutionalLayers[i] * sizeof(double));
             convolutionalGradients[i][j] = malloc(sizeConvolutionalLayers[i] * sizeof(double));
             
@@ -91,7 +124,7 @@ void initCNN(){
         maxPooledLayers[i] = malloc(sizeConvolutionalLayers[i]/4 * sizeof(double));
         pooledIndices[i] = malloc(sizeConvolutionalLayers[i]/4 * sizeof(int));
         filterBiases[i] = malloc(sizeof(double) * numFiltersAtConvolutionalLayers[i]);
-        randInitArray(filterBiases[i], numFiltersAtConvolutionalLayers[i], -0.1f, 0.4f);
+        randInitArray(filterBiases[i], numFiltersAtConvolutionalLayers[i], 0.0f, 0.1f);
     }
 
     flattenedImgs = (double* ) malloc(sizeof(double) * sizeConvolutionalLayers[numConvolutionalLayers-1]/4);
@@ -113,13 +146,14 @@ void initCNN(){
         fullyConnectedWeights[i] = malloc(sizeof(double*) * numNodesAtFullyConnectedLayers[i]);
         for (int j = 0; j < numNodesAtFullyConnectedLayers[i]; j++){
             fullyConnectedWeights[i][j] = malloc(sizeof(double) * sizePrevLayer);
-            randInitArray(fullyConnectedWeights[i][j], sizePrevLayer, -0.15, 0.15);
+            he_normal_init(fullyConnectedWeights[i][j],sizePrevLayer,numNodesAtFullyConnectedLayers[i]);
+            // randInitArray(fullyConnectedWeights[i][j], sizePrevLayer, -0.15, 0.15);
         }
         fullyConnectedGradients[i] = (double*) malloc(sizeof(double) * numNodesAtFullyConnectedLayers[i]);
         memset(fullyConnectedGradients[i], 0.0, sizeof(double) * numNodesAtFullyConnectedLayers[i]);
         fullyConnectedZ[i] = (double*) malloc(sizeof(double) * numNodesAtFullyConnectedLayers[i]);
         fullyConnectedBiases[i] = (double*) malloc(sizeof(double) * numNodesAtFullyConnectedLayers[i]);
-        randInitArray(fullyConnectedBiases[i], numNodesAtFullyConnectedLayers[i], -0.15, 0.15);
+        randInitArray(fullyConnectedBiases[i], numNodesAtFullyConnectedLayers[i], 0.0, 0.1);
     }
 }
 void destructCNN(){
@@ -133,6 +167,7 @@ void destructCNN(){
         free(filters[i]);
         free(reverseFilters[i]);
         free(paddedImages[i]);
+        free(paddedGradients[i]);
         free(convolutionalLayers[i]);
         free(convolutionalGradients[i]);
         free(maxPooledLayers[i]);
@@ -143,6 +178,7 @@ void destructCNN(){
     }
     free(summedImgs);
     free(paddedImages);
+    free(paddedGradients);
     free(filters);
     free(reverseFilters);
     free(convolutionalLayers);
@@ -177,7 +213,7 @@ void printMatrix(double* matrix, int sizeX, int sizeY) {
         // Loop through each column in the current row
         for (int j = 0; j < sizeY; j++) {
             // Print each element with a fixed width for better alignment
-            printf("%.1f ", matrix[i * sizeY + j]);  // Adjust the precision as needed
+            printf("%.5f ", matrix[i * sizeY + j]);  // Adjust the precision as needed
         }
         printf("\n");  // Newline after each row
     }
@@ -225,10 +261,10 @@ double getValofPix(double* image, double* filter, int imageWidth, int pixel, int
 
     return result;
 }
-void getValofFilter(double* image, double* gradients, double* filter, int imageWidth, int pixel, int filterSize, double learningRate) {
-    double result = 0.0;
+void getValofFilter(double* image, double* gradients, double* filter, int imageWidth, int pixel, int filterSize, double learningRate, double* filterBias, int filterNumber) {
     int halfFilter = filterSize / 2;
-    double biasGradientSum = 0.0; // Accumulator for bias gradient
+    // double biasGradientSum = 0.0; // Accumulator for bias gradient
+    double gradientSum = 0.0;
     double value;
     // Loop over the filter dimensions
     for (int i = -halfFilter; i <= halfFilter; ++i) {
@@ -245,28 +281,29 @@ void getValofFilter(double* image, double* gradients, double* filter, int imageW
                 // printf("Accessing: filterIndex: %d\n", filterIndex);
                 value = image[imageIndex] > 0.0 ? 1 : leakyAlpha;
                 filter[filterIndex] = filter[filterIndex] - learningRate * (gradients[imageIndex] * value);
+                gradientSum += gradients[imageIndex];
             }
         }
     }
-
-    return result;
+    filterBias[filterNumber] = filterBias[filterNumber] - (learningRate * gradientSum);
 }
-void filterUpdate(double * image, double* gradients, double* filter, int stride, int imgWidth, int filterSize, double learningRate, double filterBias){
+void filterUpdate(double * image, double* gradients, double* filter, int stride, int imgWidth, int filterSize, double learningRate, double* filterBias, int filterNumber){
     int necPadding = filterSize / 2;
 
     int paddedImgWidth = imgWidth + 2 * necPadding;
     int paddedImgSize = paddedImgWidth * paddedImgWidth;
-
     int iter = 0;
     int outputIter = 0;
     int regPixelIndex;
     for (int i = necPadding; i < paddedImgWidth - necPadding ; i += stride) {
         for (int j = necPadding; j < paddedImgWidth - necPadding; j += stride) {
             int pixelIndex = i * paddedImgWidth + j;
-            getValofFilter(image, gradients, filter, imgWidth, pixelIndex, filterSize, learningRate);
+            getValofFilter(image, gradients, filter, imgWidth, pixelIndex, filterSize, learningRate, filterBias, filterNumber);
+
         }
     }
-    filterBias = filterBias - (learningRate * )
+    //Need to think about how to pass filterBias
+    // filterBias[filterNumber] = filterBias[filterNumber] - (learningRate * gradientSum);
 }
 void convolute(double* image, double* retImg, double* paddedImgs, double* filter, int stride, int imgWidth, int filterSize, double filterBias){
     int necPadding = filterSize / 2;
@@ -334,22 +371,27 @@ void deMaxPool(double** imagesAtLayer, double** imageGradients,double* maxPooled
     int iter = 0;
     int lowerBound = 0;
     int upperBound = imgWidth*imgWidth;
+    double mult;
     for (int k = 0; k < numFiltersAtLayer; k++){
         iter = 0;
         for (int i = lowerBound; i < upperBound - imgWidth; i += (imgWidth*2)) {  // Move by two rows (skip)
             for (int j = i; j < imgWidth + i; j += stride) {  // Move by two columns (skip)
                 // Perform the pooling on a 2x2 block
+                if (summedImage[j] == 0){
+                    continue;
+                }
                 if (maxPooledIndices[iter] == 0){
-                    imageGradients[k][j] = (maxPooledGradients[iter]) * imagesAtLayer[k][j];
+                    imageGradients[k][j] = (maxPooledGradients[iter]/summedImage[j]) * imagesAtLayer[k][j];
                 }
                 else if (maxPooledIndices[iter] == 1){
-                    imageGradients[k][j + 1] = (maxPooledGradients[iter]) * imagesAtLayer[k][j];
+                    imageGradients[k][j + 1] = (maxPooledGradients[iter]/summedImage[j]) * imagesAtLayer[k][j];
                 }
                 else if (maxPooledIndices[iter] == 2){
-                    imageGradients[k][j + imgWidth] = (maxPooledGradients[iter]) * imagesAtLayer[k][j];
+
+                    imageGradients[k][j + imgWidth] = (maxPooledGradients[iter]/summedImage[j]) * imagesAtLayer[k][j];
                 }
                 else if (maxPooledIndices[iter] == 3){
-                    imageGradients[k][j + imgWidth + 1] = (maxPooledGradients[iter]) * imagesAtLayer[k][j];
+                    imageGradients[k][j + imgWidth + 1] = (maxPooledGradients[iter]/summedImage[j]) * imagesAtLayer[k][j];
                 }
                 iter += 1;
             }
@@ -408,18 +450,24 @@ int classifySample(image* Img, int startingSize){
                 convolute(convolutionalLayers[i-1][0],convolutionalLayers[i][j],paddedImages[i], filters[i][j], filterStrides[i], imgWidth, filterSizes[i], filterBiases[i][j]);
             }
             else{
-                convolute(maxPooledLayers[i-1],convolutionalLayers[i][j],paddedImages[i-1], filters[i][j], filterStrides[i], imgWidth, filterSizes[i], filterBiases[i][j]);
+                convolute(maxPooledLayers[i-1],convolutionalLayers[i][j],paddedImages[i], filters[i][j], filterStrides[i], imgWidth, filterSizes[i], filterBiases[i][j]);
             }
+            // printf("Printing convoluted image\n");
+            // printImg(convolutionalLayers[i][j], imgWidth*imgWidth, imgWidth,0);
         }
         if (i != 0){
             memset(summedImgs[i], 0.0, sizeConvolutionalLayers[i] * sizeof(double));
             maxPool(convolutionalLayers[i], pooledIndices[i],summedImgs[i], maxPooledLayers[i], sizeConvolutionalLayers[i], imgWidth,numFiltersAtConvolutionalLayers[i-1]);
+            // printf("Printing Max Pooled Image, Size: %d\n",sizeConvolutionalLayers[i]/4);
+            // printImg(maxPooledLayers[i],sizeConvolutionalLayers[i]/4, imgWidth/2, 0);
             if (i == numConvolutionalLayers-1){
                 memcpy(flattenedImgs, maxPooledLayers[i], sizeof(double) * sizeConvolutionalLayers[i]/4);
                 flatSizeAcc+=sizeConvolutionalLayers[i]/4;
             }
         }
     }
+    // printf("Flattened Images\n");
+    // printMatrix(flattenedImgs, 1, sizeConvolutionalLayers[numConvolutionalLayers-1]/4);
     int sizePrevLayer = flatSizeAcc;
     double* prevLayerPtr = flattenedImgs;
     double currSum = 0.0;
@@ -475,12 +523,17 @@ int classifySample(image* Img, int startingSize){
     }
     double max = -DBL_MAX;
     double expSum = 0.0;
-    double temperature = 100.0f;
+    // double temperature = 100.0f;
     for (int i = 0; i < numNodesAtFullyConnectedLayers[numFullyConnectedLayers-1]; i++) {
         max = fmax(max, fullyConnectedZ[numFullyConnectedLayers-1][i]);
     }
     for (int i = 0; i < numNodesAtFullyConnectedLayers[numFullyConnectedLayers-1]; i++) {
-        double expVal = exp(fullyConnectedZ[numFullyConnectedLayers-1][i]- max);
+        double expVal = exp(fullyConnectedZ[numFullyConnectedLayers-1][i]);
+        // printf("Exp expVal: %f\n", expVal);
+        // printf("Exp Sum: %f\n", expSum);
+        if (isnan(expSum)){
+            exit(0);
+        }
         expSum += expVal;
     }
     if (isinf(max)) {
@@ -491,23 +544,25 @@ int classifySample(image* Img, int startingSize){
     double logSumExp = max + log(expSum);
     int index;
     for (int i = 0; i< numNodesAtFullyConnectedLayers[numFullyConnectedLayers-1]; i++){
-        fullyConnectedActivated[numFullyConnectedLayers-1][i] = exp(fullyConnectedZ[numFullyConnectedLayers-1][i] - logSumExp)/expSum;
-        if (!(expSum == expSum)){
+        fullyConnectedActivated[numFullyConnectedLayers-1][i] = (exp(fullyConnectedZ[numFullyConnectedLayers-1][i])/expSum);
+        if ((expSum != expSum || isinf(expSum))){
             printf("ExpSum non defined value: %f\n", expSum);
             destructCNN();
             exit(0);
         }
-        else if (!(fullyConnectedActivated[numFullyConnectedLayers-1][i] == fullyConnectedActivated[numFullyConnectedLayers-1][i])){
+        else if (fullyConnectedActivated[numFullyConnectedLayers-1][i] != fullyConnectedActivated[numFullyConnectedLayers-1][i] || isinf(fullyConnectedActivated[numFullyConnectedLayers-1][i])){
             printf("Output non defined value: %f\n", fullyConnectedActivated[numFullyConnectedLayers-1][i]);
             destructCNN();
             exit(0);
         }
+        // printf("[%d, %f]\n", i,fullyConnectedActivated[numFullyConnectedLayers-1][i]);
         maxProb = fmax(fullyConnectedActivated[numFullyConnectedLayers-1][i], maxProb);
         if (maxProb == fullyConnectedActivated[numFullyConnectedLayers-1][i]){
             index = i;
         }
         // printf("[%d : %f]\n", i, fullyConnectedActivated[numFullyConnectedLayers-1][i]);
     }
+    // sleep(1);
     return index;
 }
 /*
@@ -540,7 +595,8 @@ void backPropogate(image* Img, double learningRate){
         }
         memset(pooledGradients[i],0.0, sizeConvolutionalLayers[i]/4 * sizeof(double));
     }
-    
+
+
 
 
     double labelledOutput[10];
@@ -553,29 +609,38 @@ void backPropogate(image* Img, double learningRate){
         //So the derivative of the softmax function essentially boils down to negative residuals, so heres our output layers loss.
         fullyConnectedGradients[numFullyConnectedLayers-1][i] = fullyConnectedActivated[numFullyConnectedLayers-1][i] - labelledOutput[i];
     }
+    // printMatrix(fullyConnectedGradients[numFullyConnectedLayers-1], 1, numNodesAtFullyConnectedLayers[numConvolutionalLayers-1]);
 
 
     int sizeForwardLayer = numNodesAtFullyConnectedLayers[numFullyConnectedLayers-1];
     double value;
-    for (int i = numFullyConnectedLayers-2; i > -1; i--){
+    for (int i = numFullyConnectedLayers-1; i > -1; i--){
+        if (i !=numFullyConnectedLayers-1 ){
         for (int j = 0; j < numNodesAtFullyConnectedLayers[i+1]; j++){
             for (int k =0; k < numNodesAtFullyConnectedLayers[i]; k++){
                 value = (fullyConnectedActivated[i][k] > 0.0) ? 1.0 : leakyAlpha;
                 fullyConnectedGradients[i][k] += (fullyConnectedGradients[i+1][j] * fullyConnectedWeights[i+1][j][k]) * value;
                 fullyConnectedWeights[i+1][j][k] = fullyConnectedWeights[i+1][j][k] - (learningRate * (fullyConnectedGradients[i+1][j] * fullyConnectedActivated[i][k]));
             }
-            fullyConnectedBiases[i+1][j] = fullyConnectedBiases[i+1][j] + learningRate * fullyConnectedGradients[i+1][j];
+            fullyConnectedBiases[i+1][j] = fullyConnectedBiases[i+1][j] - learningRate * fullyConnectedGradients[i+1][j];
         }
+        }
+        // // // sleep(1);
+        // printf("Layer %d Gradient:\n", i);
+        // printMatrix(fullyConnectedGradients[i], 1, numNodesAtFullyConnectedLayers[i]);
     }
+        
+
     //We now propogate the gradients through the flattened layer.
     for (int j = 0; j < numNodesAtFullyConnectedLayers[0]; j++){
         for (int k = 0; k < sizeConvolutionalLayers[numConvolutionalLayers-1]/4; k++){
             flattenedLoss[k] += (fullyConnectedGradients[0][j] * fullyConnectedWeights[0][j][k]);
             fullyConnectedWeights[0][j][k] = fullyConnectedWeights[0][j][k] - (learningRate * (fullyConnectedGradients[0][j] * flattenedImgs[k]));
         }
-        fullyConnectedBiases[0][j] = fullyConnectedBiases[0][j] + learningRate * fullyConnectedGradients[0][j];
+        fullyConnectedBiases[0][j] = fullyConnectedBiases[0][j] - learningRate * fullyConnectedGradients[0][j];
     }
 
+    // printMatrix(flattenedLoss, 1, sizeConvolutionalLayers[numConvolutionalLayers-1]/4);
     //Its time to get freaky, we gotta propogate through the convolutional layers now. (Im going insane |-O:O-|)
     memcpy(pooledGradients[numConvolutionalLayers-1], flattenedLoss, sizeConvolutionalLayers[numConvolutionalLayers-1]/4);
     int imgWidth;
@@ -602,33 +667,33 @@ void backPropogate(image* Img, double learningRate){
 
                 //Erm this is awkward, I think the padded image is a wee bit funky...We may have to create a padded image of the filter specific gradients at this layer.
                 memset(paddedImages[i], 0.0, paddedImgWidth * paddedImgWidth * sizeof(double));
+                memset(paddedGradients[i], 0.0, paddedImgWidth * paddedImgWidth * sizeof(double));
                 iter = 0;
                 for (int k = 0; k < imgWidth; k++) {
                     for (int g = 0; g < imgWidth; g++) {
                         int paddedIndex = (k + necPadding) * paddedImgWidth + (g + necPadding);
-                        paddedImages[i][paddedIndex] = convolutionalGradients[i][j][iter];
+                        paddedGradients[i][paddedIndex] = convolutionalGradients[i][j][iter];
+                        paddedImages[i][paddedIndex] = convolutionalLayers[i][j][iter];
                         iter++;
                     }
                 }
                 //If we are not on the last layer (i.e. the one before the actual image) backpropogate the gradient.
                 if (i != 1){
-                    convolute(convolutionalGradients[i][j],convolutionalGradients[i][j],paddedImages[i], filters[i][j], filterStrides[i], imgWidth, filterSizes[i], 0.0);
+                    convolute(convolutionalGradients[i][j],convolutionalGradients[i][j],paddedGradients[i], filters[i][j], filterStrides[i], imgWidth, filterSizes[i], 0.0);
                     memcpy(pooledGradients[i-1], convolutionalGradients[i][j], sizeConvolutionalLayers[i]);
                 }
-                //NGL we seg fault rn so theres something wrong here, but I am not going to check until I finish the logic of this jawn. 
-
                 //3. Updating filter weights by applying the same filter operation, but this time updating the weights at each index instead of pixels in the return img
                 //THERE IS A PROBLEM HERE, I NEED TO CREATE A PADDED GRADIENT AND A PADDED IMAGE FOR THIS LOGIC TO WORK!
                 //IN ORDER TO CALCULATE FILTER VALUES I NEED TO HAVE THE ACTIVATED FUNCTION AT THIS NODE WHICH IS THE IMAGE, BUT ALSO THE GRADIENT AT THE PIXEL
                 //TO COMBINE THESE AND UPDATE FILTER WEIGHTS I NEED THEM TO BE THE SAME SIZE AND PADDED!
-                filterUpdate(convolutionalLayers[i][j], convolutionalGradients[i][j],filters[i][j], filterStrides[i], imgWidth, filterSizes[i], learningRate);
+                filterUpdate(paddedImages[i], paddedGradients[i],filters[i][j], filterStrides[i], imgWidth, filterSizes[i], learningRate, filterBiases[i], j);
 
             //4. Dunking on the opposition
         }
     }
 
 }
-void trainCNN(char* filename, int learn){
+void trainCNN(char* filename, int learn, double learningRate){
     image *Img = (image *) malloc(sizeof(image));
     FILE *trainingcsv = NULL;
     char* buffer = malloc(6000);
@@ -674,13 +739,14 @@ void trainCNN(char* filename, int learn){
         prediction = classifySample(Img, 28);
         // printf("Prediction: %d\n", prediction);
         if (learn){
-            backPropogate(Img, 0.5f);
+            backPropogate(Img, learningRate);
         }
         if (prediction == Img->label){
             correct+=1;
         }
         total +=1;
-        // sleep(2);
+        // printf("Classification accuracy: %f\n",correct/total);
+        // sleep(1);
         }
         printf("Classification accuracy: %f\n",correct/total);
         fclose(trainingcsv);
@@ -691,34 +757,41 @@ void trainCNN(char* filename, int learn){
     return;
 }
 int main(){
-    leakyAlpha = 0.001;
-    int numEpochs = 10;
+    leakyAlpha = 0.01;
+    int numEpochs = 50;
     numConvolutionalLayers = 3;
-    numFullyConnectedLayers = 3;
-    int numFiltersAtConvolutionalLayersArr[4] = {1, 10, 10, 2};
+    numFullyConnectedLayers = 4;
+    int numFiltersAtConvolutionalLayersArr[4] = {1, 32, 64, 2};
     numFiltersAtConvolutionalLayers = numFiltersAtConvolutionalLayersArr;
 
-    int filterSizesArr[4] = {1, 5, 3, 3};
+    int filterSizesArr[4] = {1, 3, 3, 3};
     filterSizes = filterSizesArr;
 
     int sizeConvolutionalLayersArr[4] = {784, 784, 196, 49};
     sizeConvolutionalLayers = sizeConvolutionalLayersArr;
 
-
-    int numNodesAtFullyConnectedLayersArr[5] = {256, 32, 10};
+    int numNodesAtFullyConnectedLayersArr[5] = {256, 128, 64, 10};
+    // int numNodesAtFullyConnectedLayersArr[5] = {128, 64, 32, 10};
     numNodesAtFullyConnectedLayers = numNodesAtFullyConnectedLayersArr; // need to malloc these;
 
-    int filterStridesArr[4] = {0, 2, 1, 1};
+    int filterStridesArr[4] = {0, 2, 2, 1};
     filterStrides = filterStridesArr;
     char* trainingSet = "../MNIST_DATA/mnist_train.csv";
     char* testingSet = "../MNIST_DATA/mnist_test.csv";
     initCNN();
+    double learningRate = 0.000090;
     for (int i = 0; i < numEpochs; i++){
+        // if (learningRate > 0.001){
+        //     learningRate*=0.9;
+        // }
+        
         printf("Training epoch: %d\n", i);
         printf("Accuracy on training:\n");
-        trainCNN(trainingSet, 1);
+        trainCNN(trainingSet, 1,learningRate);
+        // sleep(1);
+    
         printf("Accuracy on test:\n");
-        trainCNN(testingSet, 0);
+        trainCNN(testingSet, 0,learningRate);
     }
     
     destructCNN();
