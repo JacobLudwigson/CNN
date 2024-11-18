@@ -1,2 +1,2 @@
 # CNN
-Convolutional Neural Network for handwritten digit classification written in C.
+Convolutional Neural Network for image classification written in C.
