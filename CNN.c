@@ -1,9 +1,33 @@
 /*
     Author: Jacob Ludwigson
+    
+    CNN.c Documentation --------------------------------------------------------------------------------------------------------------------------------------------------
+    Overview: This is a single threaded CNN implementation in C. I wrote this as a fun project to deepen my understanding of ML concepts. If you find this code useful feel free to use it.
+    - Future plans may include implementing multithreading + optimizations accross the board.
 
-    Notes for possible future optimization as needed: Reverse Filters are stored in a way in which there is an instance of each filter AND its reverse, for every single filter.
-        -This could be altered to be some sort of stack local variable, however, I have designed it this way such that they are dynamically created based on architechture parameters.
-        -A solution that is potentially better would be to malloc memory for one filter at each "layer" the iterator passes in the outer loop of the convolutional weight updates.
+    This is written to take image data in csv format. I have ran this at 96% accuracy on MNIST handwritten digits with a 1/5 test split.
+
+    Individual Function docs:
+    -Most of the individual functions are relatively straightforward - named with what they do.
+    randInitArray(double* array, int size, double lower, double upper) - randomly initializes an array using rand() - I have since upgraded to he randoms, however I have left this in.
+    rand_normal() - helper function to he random
+    he_normal_init(double *weights, int size, int fan_in) - initialize weights array of size size with he normalization using parameter fan in.
+    initCNN() - alloc memory for network
+    destructCNN() - free memory for network
+    printMatrix(double* matrix, int sizeX, int sizeY) - print matrix to terminal (this was for debugging)
+    printImg(double* grayscale, int upperBound, int imageWidth, int label) - print an image to terminal (also for debugging but different use case) - this casts to int bfore printing
+    getValofPix(double* image, double* filter, int imageWidth, int pixel, int filterSize) - get the value of a given pixel by applying the filter at this pixel index to the image
+    getValofFilter(double* image, double* gradients, double* filter, int imageWidth, int pixel, int filterSize, double learningRate, double* filterBias, int filterNumber) - this is the reverse of getValofPix (used for updating filter weights on backprop)
+    filterUpdate(double * image, double* gradients, double* filter, int stride, int imgWidth, int filterSize, double learningRate, double* filterBias, int filterNumber) - this is the parent of filter update (part of the gradient backprop for filter weights)
+    void convolute(double* image, double* retImg, double* paddedImgs, double* filter, int stride, int imgWidth, int filterSize, double filterBias) - this is the parent of get val of pix (apply filters across whole image, where get val of pix applies it to one image)
+    addTwoMatrices(double* A, double* B, int size) - Does as it says, add two matrices - result stored in A
+    maxPool(double** image, int* indices, double* summedImg,  double* returnImage, int upperBound, int imgWidth, int howManyFiltersAtPrevConvLayer) - Max pool an img (2x2 filter) storing result in return image. Summed image as a matrix A to store the summed image in without overwriting the original
+    deMaxPool(double** imagesAtLayer, double** imageGradients,double* maxPooledGradients,int* maxPooledIndices,double* summedImage, int imgWidth, int numFiltersAtLayer) - reverse the max pool operation for gradient back prop, same function but in reverse (find where to "push" the gradient to using the indicies (whcih stores where the max value of the max pool was prior to shrinking img)
+    classifySample(image* Img, int startingSize) - classify an image
+    reverseFilter(double* filter, double* revFilter, int filterSize) - reverses a given filter storing it in revFilter, necessary for deconvolution operation
+    backPropogate(image* Img, double learningRate) - backpropogate gradients to update weights across fully connected portion and convolutional filters
+    trainCNN - calls classify and backpropogate to train the CNN
+    ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 */
 #include <math.h>
 #include <stdio.h>  // file handling functions
