@@ -15,7 +15,6 @@ typedef struct image {
     double* grayscale;
     short label;
 }image;
-// Yes this is a lot of globals, no I do not care. You try to do this task passing around a gazillion double pointers to every function as parameters.
 int numConvolutionalLayers;
 int* numFiltersAtConvolutionalLayers;
 int* filterSizes;
@@ -338,7 +337,8 @@ void addTwoMatrices(double* A, double* B, int size){
 }
 void maxPool(double** image, int* indices, double* summedImg,  double* returnImage, int upperBound, int imgWidth, int howManyFiltersAtPrevConvLayer){
     double* A;
-    //there is no fucking way this is right.
+    //its hard to believe this is right, but it works! Summing filtered images prior to max pooling to keep complexity small does not have a noticeably large impact on accuracy \_O_/
+    // This "mushes" the third dimension of our data together into two so it can be max pooled.
     for (int f = 0; f < howManyFiltersAtPrevConvLayer; f++){
         A = image[f];
         addTwoMatrices(summedImg, A, imgWidth);
@@ -683,12 +683,8 @@ void backPropogate(image* Img, double learningRate){
                     memcpy(pooledGradients[i-1], convolutionalGradients[i][j], sizeConvolutionalLayers[i]);
                 }
                 //3. Updating filter weights by applying the same filter operation, but this time updating the weights at each index instead of pixels in the return img
-                //THERE IS A PROBLEM HERE, I NEED TO CREATE A PADDED GRADIENT AND A PADDED IMAGE FOR THIS LOGIC TO WORK!
-                //IN ORDER TO CALCULATE FILTER VALUES I NEED TO HAVE THE ACTIVATED FUNCTION AT THIS NODE WHICH IS THE IMAGE, BUT ALSO THE GRADIENT AT THE PIXEL
-                //TO COMBINE THESE AND UPDATE FILTER WEIGHTS I NEED THEM TO BE THE SAME SIZE AND PADDED!
                 filterUpdate(paddedImages[i], paddedGradients[i],filters[i][j], filterStrides[i], imgWidth, filterSizes[i], learningRate, filterBiases[i], j);
 
-            //4. Dunking on the opposition
         }
     }
 
@@ -757,6 +753,10 @@ void trainCNN(char* filename, int learn, double learningRate){
     return;
 }
 int main(){
+    //Note to any cloners: it is important you get dimensions right, otherwise image clipping or seg faults can happen. I didnt implement guardrails against this.
+    //(i.e. dont say the size of convolutional layers is going to increase sequentially in the array, if you dont know why that is, dont use this code.)
+    //The hyperparameter set is not guarenteed to converge. If you are throwing infinities try messing with the learning rate to avoid exploding gradients.
+    // If you are getting low or decreasing accuracy as epochs increase: Try 1.Shrinking the network, 2. Stronger Learning rate, 3. Learning rate scheduling.
     leakyAlpha = 0.01;
     int numEpochs = 50;
     numConvolutionalLayers = 3;
